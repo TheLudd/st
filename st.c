@@ -2798,3 +2798,77 @@ copyurl(const Arg *arg) {
 
 	free(linestr);
 }
+
+/*
+** Select and copy the previous git hash on screen (do nothing if there's no hash).
+** Looks for hex strings that are 7-40 characters long (git short/full hashes).
+*/
+static inline int
+ishexchar(Rune c) {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+}
+
+void
+copyhash(const Arg *arg) {
+	/* remove highlighting from previous selection if any */
+	if(sel.ob.x >= 0 && sel.oe.x >= 0)
+		tsetcolor(sel.nb.y, sel.ob.x, sel.oe.x + 1, defaultfg, defaultbg);
+
+	int row, col, colend, passes = 0;
+	int hashstart, hashlen;
+	int foundstart = -1, foundlen = 0, foundrow = -1;
+
+	row = (sel.ob.x >= 0 && sel.nb.y > 0) ? sel.nb.y : term.bot;
+	LIMIT(row, term.top, term.bot);
+
+	colend = (sel.ob.x >= 0 && sel.nb.y > 0) ? sel.nb.x : term.col;
+	LIMIT(colend, 0, term.col);
+
+	/* Scan from (term.bot,term.col) to (0,0) */
+	while(passes != term.bot + 2 && foundstart < 0) {
+		/* Scan line backwards for hash patterns */
+		for (col = colend - 1; col >= 0 && foundstart < 0; --col) {
+			if (ishexchar(term.line[row][col].u)) {
+				/* find start of this hex sequence */
+				hashstart = col;
+				while (hashstart > 0 && ishexchar(term.line[row][hashstart - 1].u))
+					hashstart--;
+				/* count full length */
+				hashlen = 0;
+				while (hashstart + hashlen < colend && ishexchar(term.line[row][hashstart + hashlen].u))
+					hashlen++;
+				/* valid git hash: 7-40 hex chars */
+				if (hashlen >= 7 && hashlen <= 40) {
+					foundstart = hashstart;
+					foundlen = hashlen;
+					foundrow = row;
+				}
+				col = hashstart; /* skip this sequence */
+			}
+		}
+
+		if (--row < term.top)
+			row = term.bot;
+
+		colend = term.col;
+		passes++;
+	}
+
+	if (foundstart >= 0) {
+		selclear();
+		sel.ob.x = foundstart;
+
+		/* highlight selection by inverting terminal colors */
+		tsetcolor(foundrow, sel.ob.x, sel.ob.x + foundlen, defaultbg, defaultfg);
+
+		/* select and copy */
+		sel.mode = 1;
+		sel.type = SEL_REGULAR;
+		sel.oe.x = sel.ob.x + foundlen - 1;
+		sel.ob.y = sel.oe.y = foundrow;
+		selnormalize();
+		tsetdirt(sel.nb.y, sel.ne.y);
+		xsetsel(getsel());
+		xclipcopy();
+	}
+}
